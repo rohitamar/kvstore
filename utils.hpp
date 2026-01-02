@@ -1,0 +1,89 @@
+#pragma once 
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+inline uint32_t get_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
+    return static_cast<uint32_t>(seconds);
+}
+
+bool read_at_offset(
+    const std::string& filename,
+    uint64_t offset, 
+    uint64_t size, 
+    std::string& output
+) {
+    std::ifstream file(filename, std::ios::binary);
+    if(!file.is_open()) {
+        return false;
+    }
+    
+    file.seekg(offset, std::ios::beg);
+    if(!file) {
+        return false;
+    }
+
+    std::vector<char> output_ptr(size);
+    file.read(output_ptr.data(), size);
+    output.assign(output_ptr.data(), size);
+    return true;
+}
+
+template<typename T>
+std::string serialize(const T& data) {
+    if constexpr (std::is_same_v<std::decay_t<T>, std::string>) {
+        return data;
+    } else {
+        static_assert(std::is_trivially_copyable_v<T>, "Key and Value must be a fundamental data type or a string.");
+        return std::string(
+            reinterpret_cast<const char*>(&data),
+            sizeof(T)
+        );
+    }
+}
+
+template<typename T>
+T deserialize(const std::string& data) {
+    if constexpr (std::is_same_v<std::decay_t<T>, std::string>) {
+        return data;
+    } else {
+        static_assert(std::is_trivially_copyable_v<T>, "Key and Value must be a fundamental data type or a string.");
+        
+        if(data.size() != sizeof(T)) {
+            throw std::runtime_error("Deserialization error.");
+        }
+        
+        T result;
+        std::memcpy(&result, data.data(), sizeof(T));
+        return result;
+    }
+}
+
+uint32_t num_data_files() {
+    const fs::path datafiles_dir{"./datafiles"};
+    uint32_t count = 0;
+    for(auto _ : fs::directory_iterator(datafiles_dir)) {
+        count++;
+    }
+    return count;
+}
+
+void create_new_active() {
+    uint32_t count = num_data_files();
+
+    fs::path old_path = "active";
+    fs::path new_path = "old-" + std::to_string(count);
+
+    fs::rename(old_path, new_path);
+}

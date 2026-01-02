@@ -1,8 +1,6 @@
 #pragma once 
 
 #include <array>
-#include <chrono>
-#include <cstddef>
 #include <cstdint>
 
 inline uint32_t calculate_crc(const void* data, size_t length) {
@@ -31,11 +29,4 @@ inline uint32_t calculate_crc(const void* data, size_t length) {
         crc = (crc >> 8) ^ table[lookup_index];
     }
     return ~crc;
-}
-
-inline uint32_t get_timestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
-    return static_cast<uint32_t>(seconds);
 }
