@@ -78,12 +78,3 @@ uint32_t num_data_files() {
     }
     return count;
 }
-
-void create_new_active() {
-    uint32_t count = num_data_files();
-
-    fs::path old_path = "active";
-    fs::path new_path = "old-" + std::to_string(count);
-
-    fs::rename(old_path, new_path);
-}
