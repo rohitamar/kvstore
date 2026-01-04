@@ -71,10 +71,26 @@ T deserialize(const std::string& data) {
 }
 
 uint32_t num_data_files() {
-    const fs::path datafiles_dir{"./datafiles"};
+    const fs::path datafiles_dir{"datafiles"};
     uint32_t count = 0;
     for(auto _ : fs::directory_iterator(datafiles_dir)) {
         count++;
     }
     return count;
+}
+
+std::vector<std::string> get_datafiles() {
+    const fs::path datafiles_dir{"datafiles"};
+    std::vector<std::string> datafiles_in_dir;
+    for(const auto& datafile_path : fs::directory_iterator(datafiles_dir)) {
+        datafiles_in_dir.push_back(datafile_path.path().generic_string());
+    }
+    
+    // sort to maintain order (file_id indices are decided like this)
+    std::sort(datafiles_in_dir.begin(), datafiles_in_dir.end());
+    
+    // remove first element (./datafiles/active), and push it to front 
+    std::rotate(datafiles_in_dir.begin(), datafiles_in_dir.begin() + 1, datafiles_in_dir.end());
+
+    return datafiles_in_dir;
 }
