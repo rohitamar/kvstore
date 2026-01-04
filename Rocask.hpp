@@ -30,15 +30,14 @@ class Rocask {
             // create file, add to _files and close.
             std::ofstream tmp(_active_path);
             tmp.close();
-            _datafiles.push_back(_active_path.string());
+            _datafiles.push_back(_active_path);
         } else {
             // get active and all old files from ./datafiles
-            std::vector<std::string> datafiles_in_dir = get_datafiles();
+            _datafiles = get_datafiles();
 
             // process each datafile
-            for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
-                process_datafile(datafiles_in_dir[i], i);
-                _datafiles.push_back(datafiles_in_dir[i]);
+            for(size_t i = 0; i < _datafiles.size(); i++) {
+                process_datafile(_datafiles[i], i);
             }
         }
     }
@@ -46,20 +45,30 @@ class Rocask {
     template<typename K, typename V>
     void write(const K& key, const V& value);
 
+    // write, read and compaction/merge
     template<typename K, typename V>
     V read(const K& key);
+    void compaction();
 
     private:
     std::unordered_map<std::string, KeyDirEntry> _keydir;
     std::vector<std::string> _datafiles;
-    fs::path _active_path = "datafiles/active";
+    const std::string _active_path = "datafiles/active";
 
+    //helper
     void process_datafile(const std::string &path, const uint32_t& file_id);
+    void build_data_buffer(
+        char *buffer_ptr, 
+        uint32_t timestamp,
+        uint64_t key_size,
+        uint64_t value_size,
+        const std::string& key,
+        const std::string& value
+    );
 
+    // helper as well, but write/read
     void raw_write(const std::string& key, const std::string& value);
     std::string raw_read(std::string key);
-
-    void compaction();
 };
 
 void Rocask::process_datafile(const std::string& path, const uint32_t& file_id) {
@@ -103,7 +112,7 @@ void Rocask::process_datafile(const std::string& path, const uint32_t& file_id) 
     }
 }
 
-void build_data_buffer(
+void Rocask::build_data_buffer(
     char *buffer_ptr, 
     uint32_t timestamp,
     uint64_t key_size,
@@ -151,7 +160,7 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
     char *crc_ptr = reinterpret_cast<char*>(&crc);
 
     const std::string old_path = "datafiles/active";
-    uint64_t file_size = fs::file_size(_active_path);
+    uint64_t file_size = fs::file_size(Rocask::_active_path);
     uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
     if(new_file_size > MAX_FILE_SIZE) {
         uint32_t count = num_data_files();
@@ -208,18 +217,22 @@ void Rocask::write(const K& key, const V& value) {
 }
 
 void Rocask::compaction() {
-    std::vector<std::string> datafiles_in_dir = get_datafiles();
     size_t new_datafile_index = 1;
+    std::string new_datafile_path = "newdatafiles/new-" + std::to_string(new_datafile_index);
+    std::ofstream fout_new(new_datafile_path, std::ios::binary);
+    
+    std::vector<std::string> datafiles_in_dir = get_datafiles();
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
-        if(i == 0) {
+        if(i == datafiles_in_dir.size() - 1) {
+            // skip active path, compact/merge only old files
             continue;
         }
+
         std::string datafile_path = datafiles_in_dir[i];
+        // fin_old reads from old datafiles, fout_new writes to new datafiles
         std::ifstream fin_old(datafile_path, std::ios::binary);
         
-        std::string new_datafile_path = "new-" + new_datafile_index;
-        std::ofstream fout_new(new_datafile_path, std::ios::binary);
-
+        // same as what we did in raw_read
         uint64_t cur_value_pos = 0;
         // crc - 4 bytes
         uint32_t crc;
@@ -251,7 +264,7 @@ void Rocask::compaction() {
             KeyDirEntry entry = _keydir[key];
             if(entry.file_id == i && entry.timestamp == timestamp && entry.value_pos == cur_value_pos && entry.value_size == value_size) {
                 // write to new-{i}
-                size_t buffer_size = sizeof(crc) + sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size + value_size; 
+                size_t buffer_size = sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size + value_size; 
                 std::vector<char> buffer(buffer_size);
                 build_data_buffer(
                     buffer.data(),
@@ -262,6 +275,17 @@ void Rocask::compaction() {
                     value
                 );
 
+                // check if new-{j} can append new data (doesn't exceed the memory limit)
+                uint64_t file_size = fs::file_size(new_datafile_path);
+                uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
+                if(new_file_size > MAX_FILE_SIZE) {
+                    new_datafile_index++;
+                    new_datafile_path = "newdatafiles/new-" + std::to_string(new_datafile_index);
+                    fout_new.close();
+                    fout_new.clear();
+                    fout_new.open(new_datafile_path, std::ios::binary);
+                }
+                
                 fout_new.write(reinterpret_cast<char*>(&crc), sizeof(crc));
                 fout_new.write(buffer.data(), buffer_size);
                 fout_new.flush();
@@ -272,6 +296,7 @@ void Rocask::compaction() {
         }
     }
 
-    // delete old-1 to old-5
-    // then new-1 to new-5??
+    // move newdatafiles/new-1 to datafiles/old-1
+    // continue that for all newdatafiles
+    // maintain a read count, and I think spin on that read count for each datafiles/old-{i}
 }

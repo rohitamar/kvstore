@@ -5,4 +5,4 @@ run:
 	./main
 
 del:
-	del *.exe datafiles\*.* test.txt
+	del *.exe newdatafiles\*.* datafiles\*.* test.txt
