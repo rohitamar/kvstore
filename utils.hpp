@@ -1,5 +1,6 @@
 #pragma once 
 
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -11,11 +12,11 @@
 
 namespace fs = std::filesystem;
 
-inline uint32_t get_timestamp() {
+inline uint64_t get_timestamp() {
     auto now = std::chrono::system_clock::now();
     auto duration = now.time_since_epoch();
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
-    return static_cast<uint32_t>(seconds);
+    auto seconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    return static_cast<uint64_t>(seconds);
 }
 
 bool read_at_offset(
@@ -88,9 +89,10 @@ std::vector<std::string> get_datafiles() {
     
     // sort to maintain order (file_id indices are decided like this)
     std::sort(datafiles_in_dir.begin(), datafiles_in_dir.end());
-    
-    // remove first element (./datafiles/active), and push it to front 
-    std::rotate(datafiles_in_dir.begin(), datafiles_in_dir.begin() + 1, datafiles_in_dir.end());
+
+    // ensure that datafiles/active is last element
+    // helps with file_id indexing
+    assert(datafiles_in_dir.back() == "datafiles/active");
 
     return datafiles_in_dir;
 }
