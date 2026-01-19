@@ -10,8 +10,8 @@
 
 const size_t num_records = 50000;
 const size_t key_size = 250;
-const size_t value_size = 10000;
-const double dup_rate = 0.6;
+const size_t value_size = 5000;
+const double dup_rate = 1;
 
 int main() {
     Rocask db;

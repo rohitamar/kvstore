@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "crc.hpp"
+#include "ds/SafeMap.hpp"
 #include "utils.hpp"
 
 namespace fs = std::filesystem;
@@ -21,6 +22,13 @@ struct KeyDirEntry {
     uint64_t value_size;
     uint64_t value_pos;
     uint64_t timestamp;
+
+    bool operator==(const KeyDirEntry& other) {
+        return file_id == other.file_id && 
+               value_size == other.value_size && 
+               value_pos == other.value_pos && 
+               timestamp == other.timestamp; 
+    }
 };
 
 class Rocask {
@@ -32,14 +40,7 @@ class Rocask {
             tmp.close();
 
             // any writes to _datafiles probably will use this
-            _datafiles[0] = _active_path;
-
-            // only two types of writes:
-            // writing file_id --> _active_path
-            // writing file_id --> previously active_path
-            // both cases, _active_path will be mapped to _datafiles.size() - 1
-            // hence, funnily, always use that line for writes to _datafiles hashmap
-            // (besides the first insertion)
+            _datafiles.put(0, _active_path);
         } else {
             // get active and all old files from ./datafiles
             std::vector<std::string> datafiles = get_datafiles();
@@ -47,7 +48,7 @@ class Rocask {
             // process each datafile
             for(size_t i = 0; i < datafiles.size(); i++) {
                 process_datafile(datafiles[i], i);
-                _datafiles[i] = datafiles[i];
+                _datafiles.put(i, datafiles[i]);
             }
         }
     }
@@ -61,8 +62,8 @@ class Rocask {
     void compaction();
 
     private:
-    std::unordered_map<std::string, KeyDirEntry> _keydir;
-    std::unordered_map<uint16_t, std::string> _datafiles;
+    SafeMap<std::string, KeyDirEntry> _keydir;
+    SafeMap<uint16_t, std::string> _datafiles;
     const std::string _active_path = "datafiles/active";
 
     //helper
@@ -115,7 +116,7 @@ void Rocask::process_datafile(const std::string& path, const uint16_t& file_id) 
             cur_value_pos,
             timestamp
         };
-        _keydir[key] = entry;
+        _keydir.put(key, entry);
         // value - ignore value_size bytes, adjust value_pos for next iteration
         fin.ignore(value_size);
         cur_value_pos += value_size;
@@ -178,10 +179,10 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
 
         // "new_path" is basically the current "active" file
         // the id of this is _datafiles.size() - 1
-        _datafiles[_datafiles.size() - 1] = new_path;
+        _datafiles.add_to_end(new_path, 1);
 
         // _active_path's file_id is always _datafiles.size()
-        _datafiles[_datafiles.size()] = _active_path;
+        _datafiles.add_to_end(_active_path);
     }
 
     // binary, at end, append
@@ -198,17 +199,17 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
         value_pos,
         timestamp
     };
-    _keydir[key] = entry;
+    _keydir.put(key, entry);
 }
 
 std::string Rocask::raw_read(std::string key) {
-    if(_keydir.find(key) == _keydir.end()) {
+    if(!_keydir.contains(key)) {
         throw std::out_of_range("KeyError: " + key + " not found in map.");
     }
-    KeyDirEntry entry = _keydir[key];
+    KeyDirEntry entry = _keydir.get(key);
     std::string output;
     read_at_offset(
-        _datafiles[entry.file_id],
+        _datafiles.get(entry.file_id),
         entry.value_pos,
         entry.value_size,
         output
@@ -236,8 +237,7 @@ void Rocask::compaction() {
     std::string new_datafile_path = "datafiles/" + cur_timestamp;
     std::string new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt";
 
-    uint16_t new_datafile_file_id = _datafiles.size();
-    _datafiles[new_datafile_file_id] = new_datafile_path;
+    uint16_t new_datafile_file_id = _datafiles.add_to_end(new_datafile_path);
 
     std::vector<std::string> hint_datafiles{new_datafile_hint_path};
     std::vector<std::string> datafiles_in_dir = get_datafiles();
@@ -287,8 +287,15 @@ void Rocask::compaction() {
             fin_old.read(reinterpret_cast<char*>(value_bytes.data()), value_size);
             std::string value(value_bytes.data(), value_size);
 
-            KeyDirEntry entry = _keydir[key];
-            if(entry.file_id == i && entry.timestamp == timestamp && entry.value_pos == cur_value_pos && entry.value_size == value_size) {
+            KeyDirEntry old_entry = _keydir.get(key);
+            KeyDirEntry datafile_entry = {
+                static_cast<uint16_t>(i), 
+                value_size, 
+                cur_value_pos, 
+                timestamp
+            };
+            
+            if(old_entry == datafile_entry) {
                 // write to new-{i}
                 size_t buffer_size = sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size + value_size; 
 
@@ -318,21 +325,27 @@ void Rocask::compaction() {
                     fout_new_hint.clear();
                     fout_new_hint.open(new_datafile_hint_path, std::ios::binary);
 
-                    new_datafile_file_id = _datafiles.size();
-                    _datafiles[new_datafile_file_id] = new_datafile_path;
+                    new_datafile_file_id = _datafiles.add_to_end(new_datafile_path);
+
                     hint_datafiles.push_back(new_datafile_hint_path);
 
                     new_cur_value_pos = 0;
                 }
-                
+
                 fout_new_datafile.write(reinterpret_cast<char*>(&crc), sizeof(crc));
                 fout_new_datafile.write(buffer.data(), buffer_size);
                 fout_new_datafile.flush();
+                
+                new_cur_value_pos += sizeof(crc) + sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size;
+
+                // locked CAS update of _keydir
+                _keydir.update(key, old_entry, [&](KeyDirEntry& cur_entry) {
+                    cur_entry.file_id = new_datafile_file_id;
+                    cur_entry.value_pos = new_cur_value_pos;
+                });
 
                 // i think the hint file can just have key and file_id
                 // i dont see the point of having the rest (for now atleast)
-                new_cur_value_pos += sizeof(crc) + sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size;
-
                 fout_new_hint.write(reinterpret_cast<char*>(&key_size), sizeof(key_size));
                 fout_new_hint.write(key.data(), key_size);
                 fout_new_hint.write(reinterpret_cast<char*>(&new_datafile_file_id), sizeof(new_datafile_file_id));
@@ -349,32 +362,6 @@ void Rocask::compaction() {
         fin_old.close();
     }
 
-    // first step is to map out hintfiles (inside "hint_datafiles")
-    // go through keydir
-    for(std::string hint_datafile : hint_datafiles) {
-        std::ifstream fin(hint_datafile, std::ios::binary);
-        
-        uint64_t key_size;
-        while(fin.read(reinterpret_cast<char*>(&key_size), sizeof(key_size))) {
-            std::vector<char> key_bytes(key_size);
-            fin.read(key_bytes.data(), key_size);
-            std::string key(key_bytes.data(), key_size);
-            
-            uint16_t file_id;
-            fin.read(reinterpret_cast<char*>(&file_id), sizeof(file_id));
-
-            uint64_t value_pos;
-            fin.read(reinterpret_cast<char*>(&value_pos), sizeof(value_pos));
-            
-            // keydir update
-            // this eventually needs to be mutex locked
-            _keydir[key].file_id = file_id;
-            _keydir[key].value_pos = value_pos;
-        }
-
-        fin.close();
-    }
-
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
         if(i == datafiles_in_dir.size() - 1) {
             continue;
@@ -384,8 +371,6 @@ void Rocask::compaction() {
 }
 
 // TODO:
-// _datafiles needs to be a hashmap of int --> shared_ptr<ofstream>, change from filepath to ofstream's
 // KeyDir and _datafiles need to be Safe Hashmap
-// the line with "_keydir[key].file_id = file_id;" needs to have CAS logic to ensure that keydir was not updated by the main thread
-// Order of operations: Add newdatafiles, Update Keydir, then delete files. (more on this later) 
+// the line with "_keydir[key].file_id = file_id;" needs to have CAS logic to ensure that keydir was not updated by the main thread 
 // Make compaction in a background thread after all this
