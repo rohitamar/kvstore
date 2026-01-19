@@ -233,21 +233,23 @@ void Rocask::write(const K& key, const V& value) {
 
 void Rocask::compaction() {
     std::string cur_timestamp = std::to_string(get_timestamp());
-    std::string new_datafile_path = "newdatafiles/" + cur_timestamp;
-    std::string new_datafile_hint_path = "newdatafiles/" + cur_timestamp + ".hint";
-
-    std::ofstream fout_new_datafile(new_datafile_path, std::ios::binary);
-    std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
+    std::string new_datafile_path = "datafiles/" + cur_timestamp;
+    std::string new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt";
 
     uint16_t new_datafile_file_id = _datafiles.size();
     _datafiles[new_datafile_file_id] = new_datafile_path;
 
     std::vector<std::string> hint_datafiles{new_datafile_hint_path};
-
     std::vector<std::string> datafiles_in_dir = get_datafiles();
+
+    std::ofstream fout_new_datafile(new_datafile_path, std::ios::binary);
+    std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
+
+    uint64_t new_cur_value_pos = 0;
+
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
+        // skip active path, compact/merge only old files
         if(i == datafiles_in_dir.size() - 1) {
-            // skip active path, compact/merge only old files
             continue;
         }
 
@@ -257,6 +259,7 @@ void Rocask::compaction() {
         
         // same as what we did in raw_read
         uint64_t cur_value_pos = 0;
+
         // crc - 4 bytes
         uint32_t crc;
         while(fin_old.read(reinterpret_cast<char*>(&crc), sizeof(crc))) {
@@ -288,6 +291,7 @@ void Rocask::compaction() {
             if(entry.file_id == i && entry.timestamp == timestamp && entry.value_pos == cur_value_pos && entry.value_size == value_size) {
                 // write to new-{i}
                 size_t buffer_size = sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size + value_size; 
+
                 std::vector<char> buffer(buffer_size);
                 build_data_buffer(
                     buffer.data(),
@@ -303,16 +307,22 @@ void Rocask::compaction() {
                 uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
                 if(new_file_size > MAX_FILE_SIZE) {
                     cur_timestamp = std::to_string(get_timestamp());
-                    new_datafile_path = "newdatafiles/" + cur_timestamp;
-                    new_datafile_hint_path = "newdatafiles/" + cur_timestamp + ".hint"; 
+                    new_datafile_path = "datafiles/" + cur_timestamp;
+                    new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt"; 
 
                     fout_new_datafile.close();
                     fout_new_datafile.clear();
                     fout_new_datafile.open(new_datafile_path, std::ios::binary);
 
+                    fout_new_hint.close();
+                    fout_new_hint.clear();
+                    fout_new_hint.open(new_datafile_hint_path, std::ios::binary);
+
                     new_datafile_file_id = _datafiles.size();
-                    _datafiles[_datafiles.size()] = new_datafile_path;
+                    _datafiles[new_datafile_file_id] = new_datafile_path;
                     hint_datafiles.push_back(new_datafile_hint_path);
+
+                    new_cur_value_pos = 0;
                 }
                 
                 fout_new_datafile.write(reinterpret_cast<char*>(&crc), sizeof(crc));
@@ -321,15 +331,22 @@ void Rocask::compaction() {
 
                 // i think the hint file can just have key and file_id
                 // i dont see the point of having the rest (for now atleast)
+                new_cur_value_pos += sizeof(crc) + sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size;
+
                 fout_new_hint.write(reinterpret_cast<char*>(&key_size), sizeof(key_size));
                 fout_new_hint.write(key.data(), key_size);
                 fout_new_hint.write(reinterpret_cast<char*>(&new_datafile_file_id), sizeof(new_datafile_file_id));
+                fout_new_hint.write(reinterpret_cast<char*>(&new_cur_value_pos), sizeof(new_cur_value_pos));
                 fout_new_hint.flush();
+
+                new_cur_value_pos += value_size;
             }
             
             // add remaining value_size bytes to position
             cur_value_pos += value_size;
         }
+
+        fin_old.close();
     }
 
     // first step is to map out hintfiles (inside "hint_datafiles")
@@ -346,15 +363,29 @@ void Rocask::compaction() {
             uint16_t file_id;
             fin.read(reinterpret_cast<char*>(&file_id), sizeof(file_id));
 
+            uint64_t value_pos;
+            fin.read(reinterpret_cast<char*>(&value_pos), sizeof(value_pos));
+            
             // keydir update
             // this eventually needs to be mutex locked
             _keydir[key].file_id = file_id;
+            _keydir[key].value_pos = value_pos;
         }
+
+        fin.close();
     }
-    // then you go through every single record in the hint file
-    // and update keydir (will end up just changing the file_id)
-    // thing is updating keydir is going to need to be mutex locked, so we're going to have to figure that one out
-    // you can let many threads in a keydir for a raw_read
-    // compaction and raw_write will need to be locked though
-    // so i think thats how it would work
+
+    for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
+        if(i == datafiles_in_dir.size() - 1) {
+            continue;
+        }
+        fs::remove(datafiles_in_dir[i]);
+    }
 }
+
+// TODO:
+// _datafiles needs to be a hashmap of int --> shared_ptr<ofstream>, change from filepath to ofstream's
+// KeyDir and _datafiles need to be Safe Hashmap
+// the line with "_keydir[key].file_id = file_id;" needs to have CAS logic to ensure that keydir was not updated by the main thread
+// Order of operations: Add newdatafiles, Update Keydir, then delete files. (more on this later) 
+// Make compaction in a background thread after all this

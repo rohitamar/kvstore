@@ -8,9 +8,9 @@
 #include "Rocask.hpp"
 #include "test/TestUtils.hpp"
 
-const size_t num_records = 5000000;
-const size_t key_size = 5000;
-const size_t value_size = 5000;
+const size_t num_records = 50000;
+const size_t key_size = 250;
+const size_t value_size = 10000;
 const double dup_rate = 0.6;
 
 int main() {
@@ -48,8 +48,8 @@ int main() {
         std::string actual_value = real_map[key];
         if(db_value != actual_value) {
             std::cerr << "Key: " << key << "\n";
-            std::cerr << "DB Value: " << db_value << "\n";
-            std::cerr << "Actual Value: " << actual_value << "\n";
+            std::cerr << "DB Value: " << db_value.substr(0, 5) << "\n";
+            std::cerr << "Actual Value: " << actual_value.substr(0, 5) << "\n";
             exit(1);
         }
     }
