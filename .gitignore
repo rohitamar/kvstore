@@ -1,4 +1,5 @@
 datafiles
 newdatafiles
+special_cases
 *.exe
-text.txt
+*.txt

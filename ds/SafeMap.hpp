@@ -1,7 +1,9 @@
 #pragma once
 
 #include <mutex>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 #include <shared_mutex>
 
 template<typename K, typename V>
@@ -13,7 +15,7 @@ class SafeMap {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = map_.find(key);
         if(it == map_.end()) {
-            throw std::out_of_range("Key not found.");
+            throw std::out_of_range("SafeMap: Key not found.");
         } 
         
         return it->second;
@@ -29,9 +31,14 @@ class SafeMap {
         return map_.erase(key) > 0;
     }
 
-    void put(const K& key, const V& value) {
+    std::optional<V> put(const K& key, const V& value) {
         std::unique_lock<std::shared_mutex> lock(mutex_);
+        std::optional<V> ret = std::nullopt;
+        if(map_.find(key) != map_.end()) {
+            ret = map_[key];
+        }
         map_[key] = value;
+        return ret;
     }
 
     size_t size() const { 
@@ -58,6 +65,15 @@ class SafeMap {
         size_t new_index = map_.size() - ind;
         map_[new_index] = value;
         return new_index;
+    }
+
+    std::vector<std::pair<K, V>> items() {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        std::vector<std::pair<K, V>> ret;
+        for(const auto& [k, v] : map_) {
+            ret.emplace_back(k, v);
+        }
+        return ret;
     }
 
     void clear() {

@@ -8,10 +8,10 @@
 #include "Rocask.hpp"
 #include "test/TestUtils.hpp"
 
-const size_t num_records = 50000;
-const size_t key_size = 250;
+const size_t num_records = 100000;
+const size_t key_size = 5;
 const size_t value_size = 5000;
-const double dup_rate = 1;
+const double dup_rate = 1.0;
 
 int main() {
     Rocask db;
@@ -40,8 +40,6 @@ int main() {
             real_map[old_key] = new_value; 
         }
     }
-
-    db.compaction();
 
     for(std::string key : keys) {
         std::string db_value = db.read<std::string, std::string>(key);

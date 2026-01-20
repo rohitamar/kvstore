@@ -1,12 +1,18 @@
 #pragma once 
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "crc.hpp"
@@ -15,10 +21,12 @@
 
 namespace fs = std::filesystem;
 
-const uint32_t MAX_FILE_SIZE = 8 * 1024 * 1024;
-
+const uint64_t MAX_FILE_SIZE = 8 * 1024 * 1024;
+const uint64_t CARE_ENOUGH = 10 * 1024 * 1024; // couldn't think of a variable name
+const double COMPACTION_THRESHOLD = 1.5;
+ 
 struct KeyDirEntry {
-    uint16_t file_id;
+    uint64_t file_id;
     uint64_t value_size;
     uint64_t value_pos;
     uint64_t timestamp;
@@ -33,25 +41,8 @@ struct KeyDirEntry {
 
 class Rocask {
     public:
-    Rocask() {
-        if(!fs::exists(_active_path)) {
-            // create file, add to _files and close.
-            std::ofstream tmp(_active_path);
-            tmp.close();
-
-            // any writes to _datafiles probably will use this
-            _datafiles.put(0, _active_path);
-        } else {
-            // get active and all old files from ./datafiles
-            std::vector<std::string> datafiles = get_datafiles();
-
-            // process each datafile
-            for(size_t i = 0; i < datafiles.size(); i++) {
-                process_datafile(datafiles[i], i);
-                _datafiles.put(i, datafiles[i]);
-            }
-        }
-    }
+    Rocask();
+    ~Rocask();
 
     template<typename K, typename V>
     void write(const K& key, const V& value);
@@ -62,12 +53,30 @@ class Rocask {
     void compaction();
 
     private:
+    // KeyDir datastructures
     SafeMap<std::string, KeyDirEntry> _keydir;
-    SafeMap<uint16_t, std::string> _datafiles;
-    const std::string _active_path = "datafiles/active";
+    SafeMap<uint64_t, std::string> _datafiles;
+    
+    // compaction
+    std::thread _compaction_thread;
+    std::mutex _compaction_mutex;
+    std::condition_variable _compaction_cv;
+    bool _compact = false; 
+    bool _shutdown = false;
+
+    // file_id
+    std::atomic<uint64_t> file_index{0};
+    std::atomic<uint64_t> active_file_id{0};
+
+    // file I/O RW lock
+    std::shared_mutex _file_mutex;
+
+    // memory size 
+    uint64_t total_disk_used = 0;
+    uint64_t actual_data_size = 0;
 
     //helper
-    void process_datafile(const std::string &path, const uint16_t& file_id);
+    void process_datafile(const std::string &path, const uint64_t& file_id);
     void build_data_buffer(
         char *buffer_ptr, 
         uint64_t timestamp,
@@ -80,9 +89,58 @@ class Rocask {
     // helper as well, but write/read
     void raw_write(const std::string& key, const std::string& value);
     std::string raw_read(std::string key);
+
+    // compaction helper
+    bool compaction_conditions();
+    void trigger_compaction(); 
+    void compaction_worker();
 };
 
-void Rocask::process_datafile(const std::string& path, const uint16_t& file_id) {
+Rocask::Rocask() {
+    std::string _active_path = "datafiles/" + std::to_string(active_file_id.load());
+
+    if(!fs::exists(_active_path)) {
+        // create file, add to _files and close.
+        std::ofstream tmp(_active_path);
+        tmp.close();
+
+        // any writes to _datafiles probably will use this
+        _datafiles.put(active_file_id.load(), _active_path);
+        file_index.fetch_add(1);
+    } else {
+
+        // this else statement might have issues with the way we keep doing "make del"
+        // we actually rarely test this, so eventually need to do that
+        // for now, its fine
+        // also, this else statement is never called, just fyi
+
+        
+        // get active and all old files from ./datafiles
+        std::vector<std::string> datafiles = get_datafiles();
+
+        // process each datafile
+        for(size_t i = 0; i < datafiles.size(); i++) {
+            process_datafile(datafiles[i], i);
+            _datafiles.put(file_index.load(), datafiles[i]);
+            file_index.fetch_add(1);
+        }
+
+        active_file_id.store(file_index.load() - 1);
+    }
+
+    _compaction_thread = std::thread(&Rocask::compaction_worker, this);
+}
+
+Rocask::~Rocask() {
+    std::unique_lock<std::mutex> lock(_compaction_mutex);
+    _shutdown = true;
+    lock.unlock();
+
+    _compaction_cv.notify_one();
+    _compaction_thread.join();
+}
+
+void Rocask::process_datafile(const std::string& path, const uint64_t& file_id) {
     std::ifstream fin(path, std::ios::binary);
     uint64_t cur_value_pos = 0;
 
@@ -170,23 +228,23 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
     uint32_t crc = calculate_crc(buffer.data(), buffer_size);
     char *crc_ptr = reinterpret_cast<char*>(&crc);
 
-    const std::string old_path = "datafiles/active";
-    uint64_t file_size = fs::file_size(Rocask::_active_path);
+    std::string _active_path = "datafiles/" + std::to_string(active_file_id.load());
+    uint64_t file_size = fs::file_size(_active_path);
     uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
     if(new_file_size > MAX_FILE_SIZE) {
-        std::string new_path = "datafiles/" + std::to_string(get_timestamp());
-        fs::rename(old_path, new_path);
+        _datafiles.put(active_file_id.load(), _active_path);
 
-        // "new_path" is basically the current "active" file
-        // the id of this is _datafiles.size() - 1
-        _datafiles.add_to_end(new_path, 1);
+        file_index.fetch_add(1);
+        active_file_id.store(file_index.load());
+        _active_path = "datafiles/" + std::to_string(active_file_id.load());
 
-        // _active_path's file_id is always _datafiles.size()
-        _datafiles.add_to_end(_active_path);
+        _datafiles.put(active_file_id.load(), _active_path);
+
+        trigger_compaction();
     }
 
     // binary, at end, append
-    std::ofstream file(old_path, std::ios::binary | std::ios::ate | std::ios::app);
+    std::ofstream file(_active_path, std::ios::binary | std::ios::ate | std::ios::app);
     uint64_t value_pos = static_cast<uint64_t>(file.tellp()) + sizeof(crc) + before_value_size;
     file.write(crc_ptr, sizeof(crc));
     file.write(buffer.data(), buffer_size);
@@ -194,12 +252,21 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
 
     // update in memory hashmap (keydir)
     KeyDirEntry entry = {
-        static_cast<uint16_t>(_datafiles.size() - 1),
+        active_file_id.load(),
         value_size,
         value_pos,
         timestamp
     };
-    _keydir.put(key, entry);
+
+    std::optional<KeyDirEntry> previous_entry = _keydir.put(key, entry);
+    uint64_t memory_used = sizeof(crc) + buffer_size;
+    total_disk_used += memory_used;
+
+    if(previous_entry.has_value()) {
+        actual_data_size += (value_size - previous_entry->value_size);
+    } else {
+        actual_data_size += memory_used;
+    }
 }
 
 std::string Rocask::raw_read(std::string key) {
@@ -207,6 +274,8 @@ std::string Rocask::raw_read(std::string key) {
         throw std::out_of_range("KeyError: " + key + " not found in map.");
     }
     KeyDirEntry entry = _keydir.get(key);
+    
+    std::shared_lock lock(_file_mutex);
     std::string output;
     read_at_offset(
         _datafiles.get(entry.file_id),
@@ -234,26 +303,36 @@ void Rocask::write(const K& key, const V& value) {
 
 void Rocask::compaction() {
     std::string cur_timestamp = std::to_string(get_timestamp());
-    std::string new_datafile_path = "datafiles/" + cur_timestamp;
-    std::string new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt";
+    std::cout << "Compaction happened at " << cur_timestamp << "\n"; 
 
-    uint16_t new_datafile_file_id = _datafiles.add_to_end(new_datafile_path);
+    file_index.fetch_add(1);
+    uint64_t new_datafile_file_id = file_index.load();
 
-    std::vector<std::string> hint_datafiles{new_datafile_hint_path};
-    std::vector<std::string> datafiles_in_dir = get_datafiles();
+    std::string new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
+    // std::string new_datafile_hint_path = "datafiles/" + new_datafile_file_id + ".txt";
+
+    std::vector<std::pair<uint64_t, std::string>> datafiles_in_dir = _datafiles.items();
+    
+    _datafiles.put(new_datafile_file_id, new_datafile_path);
+
+    // std::vector<std::string> hint_datafiles{new_datafile_hint_path};
 
     std::ofstream fout_new_datafile(new_datafile_path, std::ios::binary);
-    std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
+    // std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
 
     uint64_t new_cur_value_pos = 0;
 
+    uint64_t during_compact_active_id = active_file_id.load();
+    std::cout << "snapshot active id" << " " << during_compact_active_id << std::endl;
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
+        uint64_t datafile_id = datafiles_in_dir[i].first;
+        std::string datafile_path = datafiles_in_dir[i].second;
+
         // skip active path, compact/merge only old files
-        if(i == datafiles_in_dir.size() - 1) {
+        if(datafile_id == during_compact_active_id) {
             continue;
         }
 
-        std::string datafile_path = datafiles_in_dir[i];
         // fin_old reads from old datafiles, fout_new writes to new datafiles
         std::ifstream fin_old(datafile_path, std::ios::binary);
         
@@ -289,12 +368,12 @@ void Rocask::compaction() {
 
             KeyDirEntry old_entry = _keydir.get(key);
             KeyDirEntry datafile_entry = {
-                static_cast<uint16_t>(i), 
+                datafile_id, 
                 value_size, 
                 cur_value_pos, 
                 timestamp
             };
-            
+
             if(old_entry == datafile_entry) {
                 // write to new-{i}
                 size_t buffer_size = sizeof(timestamp) + sizeof(key_size) + sizeof(value_size) + key_size + value_size; 
@@ -310,26 +389,29 @@ void Rocask::compaction() {
                 );
 
                 // check if new-{j} can append new data (doesn't exceed the memory limit)
+                // std::cout << "New Datafile Path " << new_datafile_path << "\n";
                 uint64_t file_size = fs::file_size(new_datafile_path);
                 uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
                 if(new_file_size > MAX_FILE_SIZE) {
-                    cur_timestamp = std::to_string(get_timestamp());
-                    new_datafile_path = "datafiles/" + cur_timestamp;
-                    new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt"; 
+                    file_index.fetch_add(1);
+                    new_datafile_file_id = file_index.load();
+                    new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
+
+                    _datafiles.put(new_datafile_file_id, new_datafile_path);
+
+
+                    // new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt"; 
 
                     fout_new_datafile.close();
                     fout_new_datafile.clear();
                     fout_new_datafile.open(new_datafile_path, std::ios::binary);
 
-                    fout_new_hint.close();
-                    fout_new_hint.clear();
-                    fout_new_hint.open(new_datafile_hint_path, std::ios::binary);
-
-                    new_datafile_file_id = _datafiles.add_to_end(new_datafile_path);
-
-                    hint_datafiles.push_back(new_datafile_hint_path);
+                    // fout_new_hint.close();
+                    // fout_new_hint.clear();
+                    // fout_new_hint.open(new_datafile_hint_path, std::ios::binary);
 
                     new_cur_value_pos = 0;
+                    // hint_datafiles.push_back(new_datafile_hint_path);
                 }
 
                 fout_new_datafile.write(reinterpret_cast<char*>(&crc), sizeof(crc));
@@ -346,11 +428,11 @@ void Rocask::compaction() {
 
                 // i think the hint file can just have key and file_id
                 // i dont see the point of having the rest (for now atleast)
-                fout_new_hint.write(reinterpret_cast<char*>(&key_size), sizeof(key_size));
-                fout_new_hint.write(key.data(), key_size);
-                fout_new_hint.write(reinterpret_cast<char*>(&new_datafile_file_id), sizeof(new_datafile_file_id));
-                fout_new_hint.write(reinterpret_cast<char*>(&new_cur_value_pos), sizeof(new_cur_value_pos));
-                fout_new_hint.flush();
+                // fout_new_hint.write(reinterpret_cast<char*>(&key_size), sizeof(key_size));
+                // fout_new_hint.write(key.data(), key_size);
+                // fout_new_hint.write(reinterpret_cast<char*>(&new_datafile_file_id), sizeof(new_datafile_file_id));
+                // fout_new_hint.write(reinterpret_cast<char*>(&new_cur_value_pos), sizeof(new_cur_value_pos));
+                // fout_new_hint.flush();
 
                 new_cur_value_pos += value_size;
             }
@@ -362,15 +444,59 @@ void Rocask::compaction() {
         fin_old.close();
     }
 
+    std::unique_lock lock(_file_mutex);
+    std::cout << "current active id " << active_file_id.load() << std::endl;
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
-        if(i == datafiles_in_dir.size() - 1) {
+        uint64_t datafile_id = datafiles_in_dir[i].first;
+        std::string datafile_path = datafiles_in_dir[i].second;
+
+        if(datafile_id == during_compact_active_id) {
             continue;
         }
-        fs::remove(datafiles_in_dir[i]);
+
+        _datafiles.remove(datafile_id);
+        uint64_t file_size = fs::file_size(datafile_path);
+        fs::remove(datafile_path);
+
+        total_disk_used -= file_size;
     }
+
+    std::cout << "Compaction ended." << std::endl;
 }
 
-// TODO:
-// KeyDir and _datafiles need to be Safe Hashmap
-// the line with "_keydir[key].file_id = file_id;" needs to have CAS logic to ensure that keydir was not updated by the main thread 
-// Make compaction in a background thread after all this
+bool Rocask::compaction_conditions() {
+    if(total_disk_used < CARE_ENOUGH) return false;
+    if(actual_data_size == 0) return true;
+    double ratio = (double) total_disk_used / actual_data_size;
+    return ratio > COMPACTION_THRESHOLD; 
+}
+
+void Rocask::trigger_compaction() {
+    if(!compaction_conditions()) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(_compaction_mutex);
+    _compact = true;
+    lock.unlock();
+    _compaction_cv.notify_one();
+}
+
+void Rocask::compaction_worker() {
+    while(true) {
+        std::unique_lock<std::mutex> lock(_compaction_mutex);
+
+        _compaction_cv.wait(lock, [this] {
+            return _compact || _shutdown;
+        });
+
+        if(_shutdown) break;
+
+        _compact = false;
+        lock.unlock();
+
+        if(compaction_conditions()) {
+            compaction();
+        }
+    }
+}
