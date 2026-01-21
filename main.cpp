@@ -8,8 +8,8 @@
 #include "Rocask.hpp"
 #include "test/TestUtils.hpp"
 
-const size_t num_records = 100000;
-const size_t key_size = 5;
+const size_t num_records = 1000000;
+const size_t key_size = 50;
 const size_t value_size = 5000;
 const double dup_rate = 1.0;
 

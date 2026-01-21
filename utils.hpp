@@ -86,13 +86,5 @@ std::vector<std::string> get_datafiles() {
     for(const auto& datafile_path : fs::directory_iterator(datafiles_dir)) {
         datafiles_in_dir.push_back(datafile_path.path().generic_string());
     }
-    
-    // sort to maintain order (file_id indices are decided like this)
-    std::sort(datafiles_in_dir.begin(), datafiles_in_dir.end());
-
-    // ensure that datafiles/active is last element
-    // helps with file_id indexing
-    assert(datafiles_in_dir.back() == "datafiles/active");
-
     return datafiles_in_dir;
 }
