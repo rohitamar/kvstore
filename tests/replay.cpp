@@ -1,10 +1,5 @@
-/*
-Compaction ended.
-Key: HKUQA
-DB Value: XXQFD
-Actual Value: PAQZR
-make: *** [Makefile:5: run] Error 1
-*/
+// Helpful to replay a testcase
+
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -14,8 +9,8 @@ make: *** [Makefile:5: run] Error 1
 #include <string>
 #include <vector>
 
-#include "Rocask.hpp"
-#include "test/TestUtils.hpp"
+#include "../database/Rocask.hpp"
+#include "TestUtils.hpp"
 
 int main() {
     Rocask db;

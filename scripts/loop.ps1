@@ -1,14 +1,16 @@
-$logFile = ".\execution_log.txt"
-$commandString = "make del && make main && make run"
-$iterations = 25
+$logFile = ".\execution_log"
+Clear-Content $logFile
 
-Write-Host "Starting loop for $iterations iterations..." -ForegroundColor Cyan
+$commandString = "make del && make war && war"
+$iterations = 5
+
+Write-Host "Running $iterations iterations:" -ForegroundColor Cyan
 
 for ($i = 1; $i -le $iterations; $i++) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $header = "`n================ Iteration $i of $iterations [$timestamp] ================"
     
-    Write-Host "Running iteration $i..." -NoNewline
+    Write-Host "Running iteration $i." -NoNewline
     
     Add-Content -Path $logFile -Value $header
     

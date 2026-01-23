@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "crc.hpp"
-#include "ds/SafeMap.hpp"
+#include "../datastructures/SafeMap.hpp"
 #include "utils.hpp"
 
 namespace fs = std::filesystem;
@@ -39,7 +39,6 @@ struct KeyDirEntry {
     }
 };
 
-std::ofstream fout_logger("./logs/main.txt");
 uint64_t num_compactions = 0;
 
 class Rocask {
@@ -108,7 +107,7 @@ Rocask::Rocask() {
 
     // any writes to _datafiles probably will use this
     _datafiles.put(active_file_id.load(), _active_path);
-        
+
     _compaction_thread = std::thread(&Rocask::compaction_worker, this);
 }
 
@@ -231,11 +230,6 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
     file.write(buffer.data(), buffer_size);
     file.flush();
 
-    fout_logger << "WRITE: [Key] " << key << " ";
-    fout_logger << "[Value Position] " << value_pos << " ";
-    fout_logger << "[File ID] " << active_file_id.load() << " ";
-    fout_logger << "[Datafile] " << _datafiles.get(active_file_id.load()) << "\n" << std::flush;
-    
     // update in memory hashmap (keydir)
     KeyDirEntry entry = {
         active_file_id.load(),
@@ -262,11 +256,7 @@ std::string Rocask::raw_read(std::string key) {
     KeyDirEntry entry = _keydir.get(key);
     
     std::shared_lock lock(_file_mutex);
-    fout_logger << "READ: [Key] " << key << " ";
-    fout_logger << "[Value Position] " << entry.value_pos << " ";
-    fout_logger << "[File ID] " << entry.file_id << " ";
-    fout_logger << "[Datafile] " << _datafiles.get(entry.file_id) << "\n" << std::flush;
-
+    
     std::string output;
     read_at_offset(
         _datafiles.get(entry.file_id),
@@ -293,35 +283,29 @@ void Rocask::write(const K& key, const V& value) {
 }
 
 void Rocask::compaction() {
-    std::string log_filename = "./logs/compaction" + std::to_string(num_compactions++);
-    std::ofstream compaction_logger(log_filename);
-
     std::string cur_timestamp = std::to_string(get_timestamp());
 
     file_index.fetch_add(1);
     uint64_t new_datafile_file_id = file_index.load();
 
     std::string new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
-    // std::string new_datafile_hint_path = "datafiles/" + new_datafile_file_id + ".txt";
+    std::string new_datafile_hint_path = "hintfiles/" + std::to_string(new_datafile_file_id) + ".hint";
 
     std::vector<std::pair<uint64_t, std::string>> datafiles_in_dir = _datafiles.items();
     
     _datafiles.put(new_datafile_file_id, new_datafile_path);
 
-    // std::vector<std::string> hint_datafiles{new_datafile_hint_path};
+    std::vector<std::string> hint_datafiles{new_datafile_hint_path};
 
     std::ofstream fout_new_datafile(new_datafile_path, std::ios::binary);
-    // std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
+    std::ofstream fout_new_hint(new_datafile_hint_path, std::ios::binary);
 
     uint64_t new_cur_value_pos = 0;
 
     uint64_t during_compact_active_id = active_file_id.load();
-    compaction_logger << "ACTIVE ID: " << during_compact_active_id << "\n" << std::flush;
-    compaction_logger << "NEW COMPACTION FILE " << new_datafile_path << "\n" << std::flush;
 
     for(size_t i = 0; i < datafiles_in_dir.size(); i++) {
         uint64_t datafile_id = datafiles_in_dir[i].first;
-        compaction_logger << "ON: " << datafile_id << "\n" << std::flush;
         std::string datafile_path = datafiles_in_dir[i].second;
         
         // skip active path, compact/merge only old files
@@ -385,19 +369,18 @@ void Rocask::compaction() {
                 );
 
                 // check if new-{j} can append new data (doesn't exceed the memory limit)
-                // std::cout << "New Datafile Path " << new_datafile_path << "\n";
                 uint64_t file_size = fs::file_size(new_datafile_path);
                 uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
                 if(new_file_size > MAX_FILE_SIZE) {
+                    
                     file_index.fetch_add(1);
                     new_datafile_file_id = file_index.load();
+                    
                     new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
-                    compaction_logger << "NEW COMPACTION FILE " << new_datafile_path << "\n" << std::flush;
+                    new_datafile_hint_path = "hintfiles/" + std::to_string(new_datafile_file_id);
+                    hint_datafiles.push_back(new_datafile_hint_path);
 
                     _datafiles.put(new_datafile_file_id, new_datafile_path);
-
-
-                    // new_datafile_hint_path = "datafiles/" + cur_timestamp + ".txt"; 
 
                     fout_new_datafile.close();
                     fout_new_datafile.clear();
@@ -408,7 +391,6 @@ void Rocask::compaction() {
                     // fout_new_hint.open(new_datafile_hint_path, std::ios::binary);
 
                     new_cur_value_pos = 0;
-                    // hint_datafiles.push_back(new_datafile_hint_path);
                 }
 
                 fout_new_datafile.write(reinterpret_cast<char*>(&crc), sizeof(crc));
@@ -423,18 +405,12 @@ void Rocask::compaction() {
                     cur_entry.value_pos = new_cur_value_pos;
                 });
                 
-                KeyDirEntry for_logs = _keydir.get(key);
-                compaction_logger << "CURRENT: [Key] " << key << " ";
-                compaction_logger << "[Value Position] " << for_logs.value_pos << " ";
-                compaction_logger << "[File ID] " << for_logs.file_id << " ";
-                compaction_logger << "[Datafile] " << _datafiles.get(for_logs.file_id) << "\n" << std::flush;
-
-                // i think the hint file can just have key and file_id
-                // i dont see the point of having the rest (for now atleast)
                 // fout_new_hint.write(reinterpret_cast<char*>(&key_size), sizeof(key_size));
                 // fout_new_hint.write(key.data(), key_size);
                 // fout_new_hint.write(reinterpret_cast<char*>(&new_datafile_file_id), sizeof(new_datafile_file_id));
+                // fout_new_hint.write(reinterpret_cast<char*>(&value_size), sizeof(value_size));
                 // fout_new_hint.write(reinterpret_cast<char*>(&new_cur_value_pos), sizeof(new_cur_value_pos));
+                // fout_new_hint.write(reinterpret_cast<char*>(&timestamp), sizeof(timestamp));
                 // fout_new_hint.flush();
 
                 new_cur_value_pos += value_size;
@@ -456,7 +432,6 @@ void Rocask::compaction() {
             continue;
         }
 
-        compaction_logger << "DELETE FILE " << datafile_id << "\n" << std::flush;
         _datafiles.remove(datafile_id);
         uint64_t file_size = fs::file_size(datafile_path);
         fs::remove(datafile_path);

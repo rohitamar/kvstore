@@ -1,6 +1,4 @@
 datafiles
-newdatafiles
-special_cases
+dumps
 *.exe
 *.txt
-logs

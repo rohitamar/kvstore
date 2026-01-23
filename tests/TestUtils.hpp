@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <random> 
 #include <string>
 
@@ -22,6 +23,22 @@ double get_random_value() {
     static std::mt19937 gen(dev());
     static std::uniform_real_distribution<double> dist(0.0, 1.0);
     return dist(gen);
+}
+
+template<typename T>
+std::vector<T> sample_vector(const std::vector<T>& vec, size_t size) {
+    std::vector<T> sample_vec;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    std::sample(
+        vec.begin(), vec.end(), 
+        std::back_inserter(sample_vec),
+        size,
+        gen
+    );
+
+    return sample_vec;
 }
 
 size_t get_random_index(size_t length) {

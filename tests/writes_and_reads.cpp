@@ -5,10 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "Rocask.hpp"
-#include "test/TestUtils.hpp"
+#include "../database/Rocask.hpp"
+#include "../database/utils.hpp"
+#include "TestUtils.hpp"
 
-const size_t num_records = 1000000;
+const size_t num_records = 30000;
 const size_t key_size = 50;
 const size_t value_size = 5000;
 const double dup_rate = 1.0;
@@ -19,13 +20,16 @@ int main() {
     std::vector<std::string> keys;
     std::map<std::string, std::string> real_map;
 
-    std::ofstream fout("test.txt");
+    std::string testcase_filename = "./dumps/testcase-" + std::to_string(get_timestamp()) + ".txt";
+    std::cout << testcase_filename << std::endl;
+    std::ofstream fout(testcase_filename);
+
     for(size_t i = 0; i < num_records; i++) {
         std::string key = gen_random_string(key_size);
         std::string value = gen_random_string(value_size);
         db.write<std::string, std::string>(key, value);
 
-        fout << key << " " << value << "\n";
+        fout << key << " " << value << "\n" << std::flush;
         keys.push_back(key);
         real_map[key] = value;
         
@@ -36,12 +40,31 @@ int main() {
             std::string new_value = gen_random_string(value_size);
             db.write<std::string, std::string>(old_key, new_value);
 
-            fout << old_key << " " << new_value << "\n";
+            fout << old_key << " " << new_value << "\n" << std::flush;
             real_map[old_key] = new_value; 
+        }
+
+        // Let's now read min(keys.size(), 50) keys and test reading while writing. 
+        std::vector<std::string> sample_keys;
+        if(keys.size() > 50) {
+            sample_keys = sample_vector(keys, 50);
+        } else {
+            sample_keys = keys;
+        }
+
+        for(const std::string& key : sample_keys) {
+            std::string db_value = db.read<std::string, std::string>(key);
+            std::string actual_value = real_map[key];
+            if(db_value != actual_value) {
+                std::cerr << "Key: " << key << "\n";
+                std::cerr << "DB Value: " << db_value.substr(0, 5) << "\n";
+                std::cerr << "Actual Value: " << actual_value.substr(0, 5) << "\n";
+                exit(1);
+            }
         }
     }
 
-    for(std::string key : keys) {
+    for(const std::string& key : keys) {
         std::string db_value = db.read<std::string, std::string>(key);
         std::string actual_value = real_map[key];
         if(db_value != actual_value) {

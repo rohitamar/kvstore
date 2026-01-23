@@ -1,11 +1,9 @@
-main:
-	g++ -std=c++17 -g -Wall -pthread -o main main.cpp
+wtr:
+	g++ -std=c++17 -g -Wall -pthread -o wtr ./tests/writes_then_reads.cpp
 
-replay:
-	g++ -std=c++17 -g -Wall -pthread -o replay replay.cpp
-
-run:
-	./main
+war:
+	g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
 
 del:
-	del /Q *.exe datafiles\*.* logs\*.*
+	if exist *.exe del /Q *.exe 
+	if exist datafiles\*.* del /Q datafiles\*.* 

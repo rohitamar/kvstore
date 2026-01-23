@@ -1,0 +1,18 @@
+
+================ Iteration 1 of 5 [2026-01-21 22:02:22] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769050945463814400.txt
+
+================ Iteration 2 of 5 [2026-01-21 22:17:47] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769051870400947900.txt
+
+================ Iteration 3 of 5 [2026-01-21 22:38:06] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769053089289011700.txt
