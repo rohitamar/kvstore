@@ -2,7 +2,7 @@ $logFile = ".\execution_log"
 Clear-Content $logFile
 
 $commandString = "make del && make war && war"
-$iterations = 5
+$iterations = 10
 
 Write-Host "Running $iterations iterations:" -ForegroundColor Cyan
 

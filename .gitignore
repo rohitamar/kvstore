@@ -1,4 +1,5 @@
 datafiles
 dumps
 *.exe
-*.txt
+build
+logs

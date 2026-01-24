@@ -1,18 +1,60 @@
 
-================ Iteration 1 of 5 [2026-01-21 22:02:22] ================
+================ Iteration 1 of 10 [2026-01-22 23:17:31] ================
 if exist *.exe del /Q *.exe 
 if exist datafiles\*.* del /Q datafiles\*.* 
 g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
-./dumps/testcase-1769050945463814400.txt
+./dumps/testcase-1769141856180168600.txt
 
-================ Iteration 2 of 5 [2026-01-21 22:17:47] ================
+================ Iteration 2 of 10 [2026-01-22 23:18:18] ================
 if exist *.exe del /Q *.exe 
 if exist datafiles\*.* del /Q datafiles\*.* 
 g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
-./dumps/testcase-1769051870400947900.txt
+./dumps/testcase-1769141901526695200.txt
 
-================ Iteration 3 of 5 [2026-01-21 22:38:06] ================
+================ Iteration 3 of 10 [2026-01-22 23:19:15] ================
 if exist *.exe del /Q *.exe 
 if exist datafiles\*.* del /Q datafiles\*.* 
 g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
-./dumps/testcase-1769053089289011700.txt
+./dumps/testcase-1769141957748356200.txt
+
+================ Iteration 4 of 10 [2026-01-22 23:20:09] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142012397103900.txt
+
+================ Iteration 5 of 10 [2026-01-22 23:21:08] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142071267425400.txt
+
+================ Iteration 6 of 10 [2026-01-22 23:22:09] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142132137415000.txt
+
+================ Iteration 7 of 10 [2026-01-22 23:23:07] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142190369694400.txt
+
+================ Iteration 8 of 10 [2026-01-22 23:24:10] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142253376412200.txt
+
+================ Iteration 9 of 10 [2026-01-22 23:25:12] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142314906119600.txt
+
+================ Iteration 10 of 10 [2026-01-22 23:26:12] ================
+if exist *.exe del /Q *.exe 
+if exist datafiles\*.* del /Q datafiles\*.* 
+g++ -std=c++17 -g -Wall -pthread -o war ./tests/writes_and_reads.cpp
+./dumps/testcase-1769142374612370300.txt

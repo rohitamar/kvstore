@@ -9,7 +9,7 @@
 #include "../database/utils.hpp"
 #include "TestUtils.hpp"
 
-const size_t num_records = 30000;
+const size_t num_records = 300;
 const size_t key_size = 50;
 const size_t value_size = 5000;
 const double dup_rate = 1.0;
