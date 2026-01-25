@@ -3,3 +3,4 @@ dumps
 *.exe
 build
 logs
+hashring/__pycache__

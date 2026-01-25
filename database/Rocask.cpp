@@ -1,7 +1,17 @@
 #include "Rocask.hpp"
 
-Rocask::Rocask() {
-    std::string _active_path = "datafiles/" + std::to_string(active_file_id.load());
+Rocask::Rocask(int id) {
+    db_id = id;
+    datafiles_folder = "datafiles/" + std::to_string(db_id) + "/";
+    
+    try {
+        fs::create_directories(datafiles_folder);
+    } catch(const fs::filesystem_error& e) {
+        std::cerr << "Error: " << "could not make folder " << datafiles_folder << std::endl;
+        exit(1);
+    }
+    
+    std::string _active_path = datafiles_folder + std::to_string(active_file_id.load());
 
     // create file, add to _files and close.
     std::ofstream tmp(_active_path);
@@ -110,7 +120,7 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
     uint32_t crc = calculate_crc(buffer.data(), buffer_size);
     char *crc_ptr = reinterpret_cast<char*>(&crc);
 
-    std::string _active_path = "datafiles/" + std::to_string(active_file_id.load());
+    std::string _active_path = datafiles_folder + std::to_string(active_file_id.load());
     uint64_t file_size = fs::file_size(_active_path);
     uint64_t new_file_size = file_size + static_cast<uint64_t>(sizeof(crc)) + buffer_size;
     if(new_file_size > MAX_FILE_SIZE) {
@@ -118,7 +128,7 @@ void Rocask::raw_write(const std::string& key, const std::string& value) {
 
         file_index.fetch_add(1);
         active_file_id.store(file_index.load());
-        _active_path = "datafiles/" + std::to_string(active_file_id.load());
+        _active_path = datafiles_folder + std::to_string(active_file_id.load());
 
         _datafiles.put(active_file_id.load(), _active_path);
 
@@ -175,7 +185,7 @@ void Rocask::compaction() {
     file_index.fetch_add(1);
     uint64_t new_datafile_file_id = file_index.load();
 
-    std::string new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
+    std::string new_datafile_path = datafiles_folder + std::to_string(new_datafile_file_id);
     std::string new_datafile_hint_path = "hintfiles/" + std::to_string(new_datafile_file_id) + ".hint";
 
     std::vector<std::pair<uint64_t, std::string>> datafiles_in_dir = _datafiles.items();
@@ -263,7 +273,7 @@ void Rocask::compaction() {
                     file_index.fetch_add(1);
                     new_datafile_file_id = file_index.load();
                     
-                    new_datafile_path = "datafiles/" + std::to_string(new_datafile_file_id);
+                    new_datafile_path = datafiles_folder + std::to_string(new_datafile_file_id);
                     new_datafile_hint_path = "hintfiles/" + std::to_string(new_datafile_file_id);
                     hint_datafiles.push_back(new_datafile_hint_path);
 

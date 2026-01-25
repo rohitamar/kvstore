@@ -29,10 +29,10 @@ void handle_ping(
     ([](const crow::request& req) {
         crow::json::wvalue res;
         res["message"] = "Pinged!";
-        return crow::response(
-            200,
-            res
-        );
+        crow::response response(res);
+        response.set_header("Content-Type", "application/json");
+
+        return response;
     });
 }
 
@@ -68,9 +68,12 @@ void handle_insert(
 
         CROW_LOG_INFO << "SET key=" << key << " | value=" << value;
         
-        crow::response response(201, res);
-        std::string location = "/api/get" + key;
+        crow::response response(res);
+        response.code = 201;
+
+        std::string location = "/api/get/" + key;
         response.set_header("Location", location);
+        response.set_header("Content-Type", "application/json");
 
         return response;
     });
@@ -89,7 +92,7 @@ void handle_get(
 
         try {
             raw_value = db.read<std::string, std::string>(key);
-        } catch(const std::runtime_error& _) {
+        } catch(const std::out_of_range& _) {
             return crow::response(400, "Key not found.");
         } catch(...) {
             return crow::response(500, "Server error. Try again.");

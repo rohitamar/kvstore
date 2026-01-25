@@ -18,10 +18,14 @@ build:
 runapi:
 	./build/Debug/api.exe $(RUN_ARGS)
 
+proxy:
+	cls && py proxy.py $(RUN_ARGS)
+
 cleandumps:
 	if exist dumps\*.* del /Q dumps\*.*
 
 clean:
 	if exist *.exe del /Q *.exe 
-	if exist datafiles\*.* del /Q datafiles\*.*
+	if exist datafiles\*.* rd /s /q "C:\Users\rohit\Coding\kvstore\datafiles" && mkdir "C:\Users\rohit\Coding\kvstore\datafiles"
+	if exist logs\*.* del /Q logs\*.*
 	cls

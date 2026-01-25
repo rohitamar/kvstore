@@ -41,7 +41,7 @@ struct KeyDirEntry {
 
 class Rocask {
     public:
-    Rocask();
+    Rocask(int id);
     ~Rocask();
 
     template<typename K, typename V>
@@ -53,6 +53,10 @@ class Rocask {
     void compaction();
 
     private:
+    // datafiles folder
+    int db_id;
+    std::string datafiles_folder;
+
     // KeyDir datastructures
     SafeMap<std::string, KeyDirEntry> _keydir;
     SafeMap<uint64_t, std::string> _datafiles;

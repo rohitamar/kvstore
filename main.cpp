@@ -1,10 +1,8 @@
 #include "crow.h"
 
-
 #include "api/routes.hpp"
 #include "api/FileLogHandler.hpp"
 #include "database/Rocask.hpp"
-
 
 int main(int argc, char* argv[])
 {
@@ -17,7 +15,7 @@ int main(int argc, char* argv[])
     int port = std::stoi(str_port);
 
     crow::SimpleApp app;
-    Rocask db;
+    Rocask db(port);
 
     std::string logname = "./logs/api_" + str_port + ".log";
     crow::logger::setHandler(new FileLogHandler(logname));
